@@ -1,0 +1,4 @@
+kf_hungarian_node:
+  ros__parameters:
+    detector_topic: "detectron2_object_circle"
+    
