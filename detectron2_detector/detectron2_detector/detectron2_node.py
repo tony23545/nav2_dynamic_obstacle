@@ -17,8 +17,6 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import Image, PointCloud2 
-import numpy as np
-import matplotlib.pyplot as plt
 from nav2_dynamic_msgs.msg import ObjectCircle, ObjectCircleArray
 
 class Detectron2Detector(Node):
@@ -29,6 +27,8 @@ class Detectron2Detector(Node):
             parameters=[
                 ('detectron_config_file', None),
                 ('pointcloud2_topic', None),
+                ('pcd_downsample_factor', 1),
+                ('categories', [])
             ])
 
         # setup detectron model
@@ -61,14 +61,15 @@ class Detectron2Detector(Node):
         gaussian_kernel = np.exp(-0.5 * (np.power(x-x_mean, 2) / x_var + np.power(z-z_mean, 2) / z_var)) / (2 * np.pi * np.sqrt(x_var * z_var))
         return idx[gaussian_kernel > 0.5]
 
-
     def callback(self, msg):
-        self.get_logger().info("processing one frame...")
+        self.get_logger().debug("processing one frame...")
 
+        # extract data from msg
         height = msg.height
         width = msg.width
         points = np.array(msg.data, dtype = 'uint8')
-        # rgb image
+
+        # decode rgb image
         rgb_offset = msg.fields[3].offset
         point_step = msg.point_step
         r = points[rgb_offset::point_step]
@@ -76,12 +77,21 @@ class Detectron2Detector(Node):
         b = points[(rgb_offset+2)::point_step]
         img = np.concatenate([r[:, None], g[:, None], b[:, None]], axis = -1)
         img = img.reshape((height, width, 3))
-        # point cloud
-        points = points.view('<f4')
-        down_sample_scale = 16
-        x = points[::int(down_sample_scale  * point_step / 4)]
-        y = points[1::int(down_sample_scale * point_step / 4)]
-        z = points[2::int(down_sample_scale * point_step / 4)]
+
+        # decode point cloud
+        if msg.fields[0].datatype < 3:
+            byte = 1
+        elif msg.fields[0].datatype < 5:
+            byte = 2
+        elif msg.fields[0].datatype < 8:
+            byte = 4
+        else:
+            byte = 8
+        points = points.view('<f' + str(byte))
+        pcd_downsample_factor = int(self.get_parameter("pcd_downsample_factor")._value)
+        x = points[::int(pcd_downsample_factor  * point_step / byte)]
+        y = points[1::int(pcd_downsample_factor * point_step / byte)]
+        z = points[2::int(pcd_downsample_factor * point_step / byte)]
 
         # call detectron model
         outputs = self.predictor(img)
@@ -89,14 +99,14 @@ class Detectron2Detector(Node):
         # map to point cloud data
         color = np.zeros_like(x, dtype = 'uint8')
         num_classes = outputs['instances'].pred_classes.shape[0]
-        masks = outputs["instances"].pred_masks.cpu().numpy().astype('uint8').reshape((num_classes, -1))[:, ::down_sample_scale]
+        masks = outputs["instances"].pred_masks.cpu().numpy().astype('uint8').reshape((num_classes, -1))[:, ::pcd_downsample_factor]
         head_count = 0
 
         object_array = ObjectCircleArray()
         object_array.header = msg.header
         detections = []
         for i in range(num_classes):
-            if outputs["instances"].pred_classes[i] == 0:
+            if outputs["instances"].pred_classes[i] in self.get_parameter("categories")._value:
                 idx = np.where(masks[i])[0]
                 idx = self.outlier_filter(x[idx], z[idx], idx)
                 if idx.shape[0] == 0:
@@ -107,7 +117,6 @@ class Detectron2Detector(Node):
                 ObjectMsg.r = np.linalg.norm(np.concatenate([x[idx, None], z[idx, None]], axis = -1) - np.array([[ObjectMsg.x, ObjectMsg.y]]), axis = -1).max()
                 detections.append(ObjectMsg)
                 head_count += 1
-                #color[idx] += head_count
 
         # publisher objects
         object_array.objects = detections
@@ -125,7 +134,6 @@ class Detectron2Detector(Node):
         out_img_msg.encoding = 'rgb8'
         out_img_msg.step = 3 * width
         out_img_msg.data = out_img.flatten().tolist()
-        self.get_logger().info("len of raw data: " + str(len(out_img_msg.data)))
         self.detect_img_pub.publish(out_img_msg)
 
 def main():

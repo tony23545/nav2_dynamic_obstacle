@@ -1,7 +1,6 @@
 import numpy as np 
 import cv2
 from scipy.optimize import linear_sum_assignment
-import matplotlib.pyplot as plt
 
 from nav2_dynamic_msgs.msg import ObjectCircle, ObjectCircleArray
 from geometry_msgs.msg import Pose, PoseArray
@@ -66,7 +65,7 @@ class KFHungarianTracker(Node):
         self.tracker_pose_pub = self.create_publisher(PoseArray, 'tracker_pose_array', 10)
 
     def callback(self, msg):
-        print("tracker update...")
+        self.get_logger().debug("tracker update...")
         detections = msg.objects
         detect_list = []
         radius_list = []
