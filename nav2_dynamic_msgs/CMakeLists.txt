@@ -27,9 +27,8 @@ find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/ObjectCircle.msg"
-  "msg/ObjectCircleArray.msg"
-  "srv/TrackCircle.srv"
+  "msg/Obstacle.msg"
+  "msg/ObstacleArray.msg"
   DEPENDENCIES std_msgs sensor_msgs
  )
 

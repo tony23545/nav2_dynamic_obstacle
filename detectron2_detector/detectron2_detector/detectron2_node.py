@@ -17,9 +17,12 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import Image, PointCloud2 
-from nav2_dynamic_msgs.msg import ObjectCircle, ObjectCircleArray
+from nav2_dynamic_msgs.msg import Obstacle, ObstacleArray
+from geometry_msgs.msg import Pose, Point
 
 class Detectron2Detector(Node):
+    '''use Detectron2 to detect object masks from 2D image and estimate 3D position with Pointcloud2 data
+    '''
     def __init__(self):
         super().__init__('detectron_node')
         self.declare_parameters(
@@ -47,23 +50,22 @@ class Detectron2Detector(Node):
             1)
 
         # setup publisher
-        self.detect_obj_pub = self.create_publisher(ObjectCircleArray, 'detectron2_object_circle', 10)
+        self.detect_obj_pub = self.create_publisher(ObstacleArray, 'detection', 10)
         self.detect_img_pub = self.create_publisher(Image, 'detectron2_image', 10)
 
         self.count = -1
 
     def outlier_filter(self, x, z, idx):
-        # simple outlier filter, drop points out of 3sigma
+        '''simple outlier filter, assume Gaussian distribution and drop points with low probability (too far away from center)'''
         x_mean = np.mean(x)
         x_var = np.var(x)
         z_mean = np.mean(z)
         z_var = np.var(z)
+        # probability under Gaussian distribution
         gaussian_kernel = np.exp(-0.5 * (np.power(x-x_mean, 2) / x_var + np.power(z-z_mean, 2) / z_var)) / (2 * np.pi * np.sqrt(x_var * z_var))
         return idx[gaussian_kernel > 0.5]
 
     def callback(self, msg):
-        self.get_logger().debug("processing one frame...")
-
         # extract data from msg
         height = msg.height
         width = msg.width
@@ -78,7 +80,7 @@ class Detectron2Detector(Node):
         img = np.concatenate([r[:, None], g[:, None], b[:, None]], axis = -1)
         img = img.reshape((height, width, 3))
 
-        # decode point cloud
+        # decode point cloud data
         if msg.fields[0].datatype < 3:
             byte = 1
         elif msg.fields[0].datatype < 5:
@@ -93,17 +95,21 @@ class Detectron2Detector(Node):
         y = points[1::int(pcd_downsample_factor * point_step / byte)]
         z = points[2::int(pcd_downsample_factor * point_step / byte)]
 
-        # call detectron model
+        # call detectron2 model
         outputs = self.predictor(img)
 
-        # map to point cloud data
+        # map mask to point cloud data
         color = np.zeros_like(x, dtype = 'uint8')
         num_classes = outputs['instances'].pred_classes.shape[0]
-        masks = outputs["instances"].pred_masks.cpu().numpy().astype('uint8').reshape((num_classes, -1))[:, ::pcd_downsample_factor]
-        head_count = 0
+        if num_classes == 0:
+            self.detect_obj_pub.publish(ObstacleArray())
+            return
 
-        object_array = ObjectCircleArray()
-        object_array.header = msg.header
+        masks = outputs["instances"].pred_masks.cpu().numpy().astype('uint8').reshape((num_classes, -1))[:, ::pcd_downsample_factor]
+
+        # estimate 3D position with simple averaging of obstacle's points
+        obstacle_array = ObstacleArray()
+        obstacle_array.header = msg.header
         detections = []
         for i in range(num_classes):
             if outputs["instances"].pred_classes[i] in self.get_parameter("categories")._value:
@@ -111,17 +117,16 @@ class Detectron2Detector(Node):
                 idx = self.outlier_filter(x[idx], z[idx], idx)
                 if idx.shape[0] == 0:
                     continue
-                ObjectMsg = ObjectCircle()
-                ObjectMsg.x = np.float(x[idx].mean())
-                ObjectMsg.y = np.float(z[idx].mean())
-                ObjectMsg.r = np.linalg.norm(np.concatenate([x[idx, None], z[idx, None]], axis = -1) - np.array([[ObjectMsg.x, ObjectMsg.y]]), axis = -1).max()
-                detections.append(ObjectMsg)
-                head_count += 1
+                obstacle_msg = Obstacle()
+                # pointcloud2 data has a different coordinate, swap y and z
+                obstacle_msg.position.x = np.float(x[idx].mean())
+                obstacle_msg.position.y = np.float(z[idx].mean())
+                obstacle_msg.position.z = np.float(y[idx].mean())
+                detections.append(obstacle_msg)
 
-        # publisher objects
-        object_array.objects = detections
-        object_array.object_num = head_count
-        self.detect_obj_pub.publish(object_array)
+        # publishe detection result 
+        obstacle_array.obstacles = detections
+        self.detect_obj_pub.publish(obstacle_array)
 
         # visualize detection with detectron API
         v = Visualizer(img[:, :, ::-1], MetadataCatalog.get(self.cfg.DATASETS.TRAIN[0]), scale=1)
@@ -135,7 +140,7 @@ class Detectron2Detector(Node):
         out_img_msg.step = 3 * width
         out_img_msg.data = out_img.flatten().tolist()
         self.detect_img_pub.publish(out_img_msg)
-
+        
 def main():
     rclpy.init(args = None)
     node = Detectron2Detector()

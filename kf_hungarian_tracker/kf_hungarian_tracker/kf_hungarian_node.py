@@ -2,154 +2,228 @@ import numpy as np
 import cv2
 from scipy.optimize import linear_sum_assignment
 
-from nav2_dynamic_msgs.msg import ObjectCircle, ObjectCircleArray
+from nav2_dynamic_msgs.msg import Obstacle, ObstacleArray
 from geometry_msgs.msg import Pose, PoseArray
 
 import rclpy
 from rclpy.node import Node
 
-class Object:
-    def __init__(self, pos, idx, r, dt = 0.33):
-        self.pos = pos.reshape((2, 1))
-        self.kalman = cv2.KalmanFilter(4,2)
-        self.kalman.measurementMatrix = np.array([[1,0,0,0],[0,1,0,0]],np.float32)
-        self.kalman.transitionMatrix = np.array([[1,0,dt,0],[0,1,0,dt],[0,0,1,0],[0,0,0,1]],np.float32)
-        self.kalman.processNoiseCov = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]],np.float32) * 2.0
-        self.kalman.measurementNoiseCov = np.array([[1, 0], [0, 1]], np.float32) * 1.0
-        self.kalman.statePost = np.concatenate([pos, np.zeros(2)]).astype(np.float32).reshape(4, 1)
-        '''
-        # TODO 2nd order
-        self.pos = pos.reshape((2, 1))
-        self.kalman = cv2.KalmanFilter(6,2)
-        self.kalman.measurementMatrix = np.array([[1,0,0,0,0,0],[0,1,0,0,0,0]],np.float32)
-        self.kalman.transitionMatrix = np.array([[1,0,dt,0,0.5*dt*dt,0],[0,1,0,dt,0,0.5*dt*dt],[0,0,1,0,dt,0],[0,0,0,1,0,dt],[0,0,0,0,1,0],[0,0,0,0,0,1]],np.float32)
-        self.kalman.processNoiseCov = np.eye(6, dtype = np.float32) * 3.0
-        self.kalman.measurementNoiseCov = np.array([[1, 0], [0, 1]], np.float32) * 2.0
-        self.kalman.statePost = np.concatenate([pos, np.zeros(4)]).astype(np.float32).reshape(6, 1)
-        '''
+class ObstacleClass:
+    """wrap a kalman filter and extra information for one single obstacle
+
+    Arrtibutes:
+        position: 3d position of center point, numpy array with shape (3, 1)
+        velocity: 3d velocity of center point, numpy array with shape (3, 1)
+        kalman: cv2.KalmanFilter
+        dying: count missing frames for this obstacle, if reach threshold, delete this obstacle
+        id: id for tracking
+    """
+
+    def __init__(self, obstacle_msg, idx):
+        '''Initialize with an Obstacle msg and an assigned id'''
+        self.position = np.array([[obstacle_msg.position.x, obstacle_msg.position.y, obstacle_msg.position.z]]).T # shape 3*1
+        self.velocity = np.array([[obstacle_msg.velocity.x, obstacle_msg.velocity.y, obstacle_msg.velocity.z]]).T
+
+        self.kalman = cv2.KalmanFilter(6,3) # 3d by default, 6d state space and 3d observation space
+        self.kalman.measurementMatrix = np.array([[1,0,0,0,0,0], [0,1,0,0,0,0], [0,0,1,0,0,0]], np.float32)
+        self.kalman.measurementNoiseCov = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], np.float32) * 1.0
+        self.kalman.statePost = np.concatenate([self.position, self.velocity]).astype(np.float32)
+        self.kalman.errorCovPost = np.diag([1, 1, 1, 10, 10, 10]).astype(np.float32)
+        
         self.dying = 0
-        self.hit = False
-        self.id = idx
-        self.r = r
-        self.vel = np.zeros(2)
+        self.id = idx # id of this obstacle
 
     def predict(self):
+        '''call KalmanFilter.predict and store position and velocity'''
         self.kalman.predict()
-        self.pos = self.kalman.statePre[:2]
+        self.position = self.kalman.statePre[:3]
+        self.velocity = self.kalman.statePre[3:]
 
-    def correct(self, measurement):
+    def correct(self, detect_msg):
+        '''extract position as measurement and update KalmanFilter'''
+        measurement = np.array([[detect_msg.position.x, detect_msg.position.y, detect_msg.position.z]]).T.astype(np.float32)
         self.kalman.correct(measurement)
-        self.pos = self.kalman.statePost[:2]
-        self.vel = self.kalman.statePost[2:4]
+        self.position = self.kalman.statePost[:3]
+        self.velocity = self.kalman.statePost[3:]
+
+    def distance(self, other_msg):
+        '''measurement distance between two obstacles, dy default it's Euler distance between centers
+           you can extent the Obstacle msg to include more features like bounding box or radius and include in the distance function'''
+        other_position = np.array([[other_msg.position.x, other_msg.position.y, other_msg.position.z]]).T
+        return np.linalg.norm(self.position - other_position)
 
 class KFHungarianTracker(Node):
+    '''Use Kalman Fiter and Hungarian algorithm to track multiple dynamic obstacles
+
+    Use Hungarian algorithm to match presenting obstacles with new detection and maintain a kalman filter for each obstacle.
+    spawn ObstacleClass when new obstacles come and delete when they disappear for certain number of frames
+
+    Attributes:
+        obstacle_list: a list of ObstacleClass that currently present in the scene
+        max_id: the maximum id assigned 
+        sec, nanosec: timing from sensor msg
+        detection_sub: subscrib detection result from detection node
+        tracker_obstacle_pub: publish tracking obstacles with ObstacleArray
+        tracker_pose_pub: publish tracking obstacles with PoseArray, for rviz visualization
+    '''
+
     def __init__(self):
+        '''initialize attributes and setup subscriber and publisher'''
+
         super().__init__('kf_hungarian_node')
         self.declare_parameters(
             namespace='',
             parameters=[
-                ('detector_topic', None),
+                ('a_noise', None),
+                ('death_threshold', None)
             ])
 
-        self.object_list = []
+        self.obstacle_list = []
         self.max_id = 0
+        self.sec = 0
+        self.nanosec = 0
 
         # subscribe to detector 
-        self.subscription = self.create_subscription(
-            ObjectCircleArray,
-            self.get_parameter("detector_topic")._value,
+        self.detection_sub = self.create_subscription(
+            ObstacleArray,
+            "detection",
             self.callback,
-            1)
+            10)
 
-        self.tracker_object_pub = self.create_publisher(ObjectCircleArray, 'tracker_object_array', 10)
-        self.tracker_pose_pub = self.create_publisher(PoseArray, 'tracker_pose_array', 10)
+        # publisher for tracking result
+        self.tracker_obstacle_pub = self.create_publisher(ObstacleArray, 'tracking', 10)
+        self.tracker_pose_pub = self.create_publisher(PoseArray, 'tracking_pose_array', 10)
 
     def callback(self, msg):
-        self.get_logger().debug("tracker update...")
-        detections = msg.objects
-        detect_list = []
-        radius_list = []
-        for det in detections:
-            detect_list.append(np.array([det.x, det.y]))
-            radius_list.append(det.r)
-        num_of_object = len(self.object_list)
-        num_of_detect = len(detect_list)
+        '''callback function for detection result'''
 
-        for obj in self.object_list:
+        # update delta time
+        dt = (msg.header.stamp.sec - self.sec) + (msg.header.stamp.nanosec - self.nanosec) / 1e9
+        self.sec = msg.header.stamp.sec
+        self.nanosec = msg.header.stamp.nanosec
+
+        # construct new transition matrix
+        '''
+        F = 1, 0, 0, dt, 0,  0
+            0, 1, 0, 0,  dt, 0
+            0, 0, 1, 0,  0,  dt
+            0, 0, 0, 1,  0,  0
+            0, 0, 0, 0,  1,  0
+            0, 0, 0, 0,  0,  1
+        '''
+        F = np.eye(6).astype(np.float32)
+        F[0, 3] = dt
+        F[1, 4] = dt
+        F[2, 5] = dt
+
+        # construct new process conv matrix
+        '''assume constant velocity, and obstacle's acceleration has noise in x, y, z direction ax, ay, az
+        Q = dt4*ax/4, 0,        0,        dt3*ax/2, 0,        0
+            0,        dt4*ay/4, 0,        0,        dt3*ay/2, 0
+            0,        0,        dt4*az/4, 0,        0,        dt3*az/2
+            dt3*ax/2, 0,        0,        dt2*ax,   0,        0
+            0,        dt3*ay/2, 0,        0,        dt2*ay,   0
+            0,        0,        dt3*az/2, 0,        0,        dt2*az
+        '''
+        dt2 = dt**2
+        dt3 = dt*dt2
+        dt4 = dt2**2
+        a_noise = self.get_parameter("a_noise")._value
+        Q = np.array([[dt4*a_noise[0]/4, 0, 0, dt3*a_noise[0]/2, 0, 0], 
+                      [0, dt4*a_noise[1]/4, 0, 0, dt3*a_noise[1]/2, 0],
+                      [0, 0, dt4*a_noise[2]/4, 0, 0, dt3*a_noise[2]/2],
+                      [dt3*a_noise[0]/2, 0, 0, dt2*a_noise[0], 0, 0],
+                      [0, dt3*a_noise[1]/2, 0, 0, dt2*a_noise[1], 0],
+                      [0, 0, dt3*a_noise[2]/2, 0, 0, dt2*a_noise[2]]]).astype(np.float32)
+
+        for obs in self.obstacle_list:
+            obs.kalman.transitionMatrix = F
+            obs.kalman.processNoiseCov = Q
+
+        # get detection
+        detections = msg.obstacles
+        num_of_detect = len(detections)
+        num_of_obstacle = len(self.obstacle_list)
+
+        # kalman predict
+        for obj in self.obstacle_list:
             obj.predict()
 
-        cost = np.zeros((num_of_object, num_of_detect))
-
-        for i in range(num_of_object):
+        # hungarian matching
+        cost = np.zeros((num_of_obstacle, num_of_detect))
+        for i in range(num_of_obstacle):
             for j in range(num_of_detect):
-                cost[i, j] = np.linalg.norm(self.object_list[i].pos.reshape(2) - detect_list[j])
+                cost[i, j] = self.obstacle_list[i].distance(detections[j])
+        obs_ind, det_ind = linear_sum_assignment(cost)
 
-        obj_ind, det_ind = linear_sum_assignment(cost)
+        # kalman update
+        for o, d in zip(obs_ind, det_ind):
+            self.obstacle_list[o].correct(detections[d])
 
-        for o, d in zip(obj_ind, det_ind):
-            self.object_list[o].correct(detect_list[d].astype(np.float32).reshape(2, 1))
-
-        if num_of_object <= num_of_detect: # there are new detection
-            self.birth(det_ind, num_of_detect, detect_list, radius_list)
-            #TODO filter out high cost
+        # birth of new detection obstacles and death of disappear obstacle
+        if num_of_obstacle <= num_of_detect:
+            self.birth(det_ind, num_of_detect, detections)
         else:
-            self.death(obj_ind, num_of_object)
+            self.death(obs_ind, num_of_obstacle)
 
-        # construct ObjectCircleArray
-        object_array = ObjectCircleArray()
-        object_array.header = msg.header
+        # construct ObstacleArray
+        obstacle_array = ObstacleArray()
+        obstacle_array.header = msg.header
         track_list = []
-        for obj in self.object_list:
-            ObjectMsg = ObjectCircle()
-            ObjectMsg.x = np.float(obj.pos[0])
-            ObjectMsg.y = np.float(obj.pos[1])
-            ObjectMsg.vx = np.float(obj.vel[0])
-            ObjectMsg.vy = np.float(obj.vel[1])
-            ObjectMsg.r = obj.r
-            ObjectMsg.id = obj.id
-            track_list.append(ObjectMsg)
-        object_array.objects = track_list
-        object_array.object_num = len(track_list)
-        self.tracker_object_pub.publish(object_array)
+        for obs in self.obstacle_list:
+            obstacle_msg = Obstacle()
+            obstacle_msg.position.x = np.float(obs.position[0])
+            obstacle_msg.position.y = np.float(obs.position[1])
+            obstacle_msg.position.z = np.float(obs.position[2])
+            obstacle_msg.velocity.x = np.float(obs.velocity[0])
+            obstacle_msg.velocity.y = np.float(obs.velocity[1])
+            obstacle_msg.velocity.z = np.float(obs.velocity[2])
+            obstacle_msg.id = obs.id
+            track_list.append(obstacle_msg)
+        obstacle_array.obstacles = track_list
+        self.tracker_obstacle_pub.publish(obstacle_array)
 
         # construct PoseArray
         pose_array = PoseArray()
         pose_array.header = msg.header
         pose_list = []
-        for obj in self.object_list:
-            p = Pose()
-            p.position.x = np.float(obj.pos[0])
-            p.position.y = np.float(obj.pos[1])
-            angle = np.arctan2(obj.vel[1], obj.vel[0])
-            p.orientation.z = np.float(np.sin(angle / 2))
-            p.orientation.w = np.float(np.cos(angle / 2))
-            pose_list.append(p)
+        for obs in self.obstacle_list:
+            pose = Pose()
+            pose.position.x = np.float(obs.position[0])
+            pose.position.y = np.float(obs.position[1])
+            pose.position.z = np.float(obs.position[2])
+            angle = np.arctan2(obs.velocity[1], obs.velocity[0])
+            pose.orientation.z = np.float(np.sin(angle / 2))
+            pose.orientation.w = np.float(np.cos(angle / 2))
+            pose_list.append(pose)
         pose_array.poses = pose_list
         self.tracker_pose_pub.publish(pose_array)
 
-    def birth(self, det_ind, num_of_detect, detect_list, radius_list):
+    def birth(self, det_ind, num_of_detect, detections):
+        '''generate new ObstacleClass for detections that do not match any in current obstacle list'''
         for det in range(num_of_detect):
             if det not in det_ind:
-                self.object_list.append(Object(detect_list[det], self.max_id, radius_list[det]))
+                self.obstacle_list.append(ObstacleClass(detections[det], self.max_id))
                 self.max_id += 1
 
-    def death(self, obj_ind, num_of_object):
+    def death(self, obj_ind, num_of_obstacle):
+        '''count obstacles' missing frames and delete when reach threshold'''
         new_object_list = []
-        for obj in range(num_of_object):
-            if obj not in obj_ind:
-                self.object_list[obj].dying += 1
+        for obs in range(num_of_obstacle):
+            if obs not in obj_ind:
+                self.obstacle_list[obs].dying += 1
             else:
-                self.object_list[obj].dying = 0
+                self.obstacle_list[obs].dying = 0
 
-            if self.object_list[obj].dying < 2:
-                new_object_list.append(self.object_list[obj])
-        self.object_list = new_object_list
+            if self.obstacle_list[obs].dying < self.get_parameter("death_threshold")._value:
+                new_object_list.append(self.obstacle_list[obs])
+        self.obstacle_list = new_object_list
 
 def main(args=None):
     rclpy.init(args=args)
 
     node = KFHungarianTracker()
-    node.get_logger().info("running tracker node...")
+    node.get_logger().info("start spining tracker node...")
 
     rclpy.spin(node)
 

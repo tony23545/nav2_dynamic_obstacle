@@ -1,4 +1,4 @@
 kf_hungarian_node:
   ros__parameters:
-    detector_topic: "detectron2_object_circle"
-    
+    a_noise: [2., 2., 0.] # acceration noise
+    death_threshold: 3 # maximum mising frames before deleting an obstacle
