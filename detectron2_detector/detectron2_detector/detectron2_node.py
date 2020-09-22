@@ -33,11 +33,13 @@ class Detectron2Detector(Node):
                 ('pointcloud2_topic', None),
                 ('pc_downsample_factor', 1),
                 ('min_mask', 100),
-                ('categories', [])
+                ('categories', []),
+                ('z_filter', None)
             ])
         self.pc_downsample_factor = int(self.get_parameter("pc_downsample_factor")._value)
         self.min_mask = self.get_parameter("min_mask")._value
         self.categories = self.get_parameter("categories")._value
+        self.z_filter = self.get_parameter("z_filter")._value
 
         # setup detectron model
         self.cfg = get_cfg()
@@ -129,7 +131,8 @@ class Detectron2Detector(Node):
                 obstacle_msg.scale.x = np.float(x[idx].max() - x[idx].min())
                 obstacle_msg.scale.y = np.float(z[idx].max() - z[idx].min())
                 obstacle_msg.scale.z = np.float(y[idx].max() - y[idx].min())
-                detections.append(obstacle_msg)
+                if obstacle_msg.position.z > self.z_filter[0] and obstacle_msg.position.z < self.z_filter[1]:
+                    detections.append(obstacle_msg)
 
         # publishe detection result 
         obstacle_array.obstacles = detections

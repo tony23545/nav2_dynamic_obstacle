@@ -116,12 +116,14 @@ class KFHungarianTracker(Node):
                 ('a_noise', None),
                 ('death_threshold', None),
                 ('measurementNoiseCov', None),
-                ('errorCovPost', None)
+                ('errorCovPost', None),
+                ('vel_filter', None)
             ])
         self.death_threshold = self.get_parameter("death_threshold")._value
         self.measurementNoiseCov = self.get_parameter("measurementNoiseCov")._value
         self.errorCovPost = self.get_parameter("errorCovPost")._value
         self.a_noise = self.get_parameter("a_noise")._value
+        self.vel_filter = self.get_parameter("vel_filter")._value
 
         self.obstacle_list = []
         self.max_id = 0
@@ -213,7 +215,9 @@ class KFHungarianTracker(Node):
         '''count obstacles' missing frames and delete when reach threshold'''
         new_object_list = []
         for obs in range(num_of_obstacle):
-            if obs not in obj_ind:
+            obs_vel = np.linalg.norm(np.array([self.obstacle_list[obs].msg.velocity.x, self.obstacle_list[obs].msg.velocity.y, self.obstacle_list[obs].msg.velocity.z]))
+            self.get_logger().info("obs vel = " + str(obs_vel))
+            if obs not in obj_ind or obs_vel < self.vel_filter:
                 self.obstacle_list[obs].dying += 1
             else:
                 self.obstacle_list[obs].dying = 0

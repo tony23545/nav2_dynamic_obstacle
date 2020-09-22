@@ -32,7 +32,7 @@ class MinimalSubscriber(Node):
         super().__init__('minimal_subscriber')
         self.subscription = self.create_subscription(
             Image,
-            '/realsense/camera/color/image_raw',
+            '/kitti/camera_color_left/image_raw',
             self.callback,
             30)
         self.cnt = 0

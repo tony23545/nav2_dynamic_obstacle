@@ -6,3 +6,4 @@ detectron2_node:
     pc_downsample_factor: 16
     min_mask: 20 # minimum mask to be considered as an obstacle candidate
     categories: [0] # please check out COCO dataset category_id list if you want to config this
+    z_filter: [-2., 2.] # only keep objects with z value within this range 
