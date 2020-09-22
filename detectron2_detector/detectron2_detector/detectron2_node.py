@@ -29,16 +29,21 @@ class Detectron2Detector(Node):
             namespace='',
             parameters=[
                 ('detectron_config_file', None),
+                ('detectron_score_thresh', 0.5),
                 ('pointcloud2_topic', None),
-                ('pcd_downsample_factor', 1),
+                ('pc_downsample_factor', 1),
+                ('min_mask', 100),
                 ('categories', [])
             ])
+        self.pc_downsample_factor = int(self.get_parameter("pc_downsample_factor")._value)
+        self.min_mask = self.get_parameter("min_mask")._value
+        self.categories = self.get_parameter("categories")._value
 
         # setup detectron model
         self.cfg = get_cfg()
         config_file = self.get_parameter("detectron_config_file")._value
         self.cfg.merge_from_file(model_zoo.get_config_file(config_file))
-        self.cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.5 
+        self.cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.get_parameter("detectron_score_thresh")._value
         self.cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(config_file)
         self.predictor = DefaultPredictor(self.cfg)
 
@@ -51,7 +56,7 @@ class Detectron2Detector(Node):
 
         # setup publisher
         self.detect_obj_pub = self.create_publisher(ObstacleArray, 'detection', 10)
-        self.detect_img_pub = self.create_publisher(Image, 'detectron2_image', 10)
+        self.detect_img_pub = self.create_publisher(Image, 'image', 10)
 
         self.count = -1
 
@@ -90,10 +95,9 @@ class Detectron2Detector(Node):
         else:
             byte = 8
         points = points.view('<f' + str(byte))
-        pcd_downsample_factor = int(self.get_parameter("pcd_downsample_factor")._value)
-        x = points[::int(pcd_downsample_factor  * point_step / byte)]
-        y = points[1::int(pcd_downsample_factor * point_step / byte)]
-        z = points[2::int(pcd_downsample_factor * point_step / byte)]
+        x = points[0::int(self.pc_downsample_factor * point_step / byte)]
+        y = points[1::int(self.pc_downsample_factor * point_step / byte)]
+        z = points[2::int(self.pc_downsample_factor * point_step / byte)]
 
         # call detectron2 model
         outputs = self.predictor(img)
@@ -105,23 +109,26 @@ class Detectron2Detector(Node):
             self.detect_obj_pub.publish(ObstacleArray())
             return
 
-        masks = outputs["instances"].pred_masks.cpu().numpy().astype('uint8').reshape((num_classes, -1))[:, ::pcd_downsample_factor]
+        masks = outputs["instances"].pred_masks.cpu().numpy().astype('uint8').reshape((num_classes, -1))[:, ::self.pc_downsample_factor]
 
         # estimate 3D position with simple averaging of obstacle's points
         obstacle_array = ObstacleArray()
         obstacle_array.header = msg.header
         detections = []
         for i in range(num_classes):
-            if outputs["instances"].pred_classes[i] in self.get_parameter("categories")._value:
+            if outputs["instances"].pred_classes[i] in self.categories:
                 idx = np.where(masks[i])[0]
                 idx = self.outlier_filter(x[idx], z[idx], idx)
-                if idx.shape[0] == 0:
+                if idx.shape[0] < self.min_mask:
                     continue
                 obstacle_msg = Obstacle()
                 # pointcloud2 data has a different coordinate, swap y and z
                 obstacle_msg.position.x = np.float(x[idx].mean())
                 obstacle_msg.position.y = np.float(z[idx].mean())
                 obstacle_msg.position.z = np.float(y[idx].mean())
+                obstacle_msg.scale.x = np.float(x[idx].max() - x[idx].min())
+                obstacle_msg.scale.y = np.float(z[idx].max() - z[idx].min())
+                obstacle_msg.scale.z = np.float(y[idx].max() - y[idx].min())
                 detections.append(obstacle_msg)
 
         # publishe detection result 

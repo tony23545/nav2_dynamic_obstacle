@@ -1,0 +1,4 @@
+msg/Obstacle.idl
+msg/Obstacle.msg
+msg/ObstacleArray.idl
+msg/ObstacleArray.msg
