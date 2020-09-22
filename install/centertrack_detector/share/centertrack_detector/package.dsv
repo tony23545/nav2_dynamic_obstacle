@@ -1,6 +1,0 @@
-source;share/centertrack_detector/hook/pythonpath.ps1
-source;share/centertrack_detector/hook/pythonpath.dsv
-source;share/centertrack_detector/hook/pythonpath.sh
-source;share/centertrack_detector/hook/ament_prefix_path.ps1
-source;share/centertrack_detector/hook/ament_prefix_path.dsv
-source;share/centertrack_detector/hook/ament_prefix_path.sh
