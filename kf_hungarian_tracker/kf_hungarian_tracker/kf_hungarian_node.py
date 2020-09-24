@@ -170,10 +170,11 @@ class KFHungarianTracker(Node):
             self.obstacle_list[o].correct(detections[d])
 
         # birth of new detection obstacles and death of disappear obstacle
+        dead_object_list = []
         if num_of_obstacle <= num_of_detect:
             self.birth(det_ind, num_of_detect, detections)
         else:
-            self.death(obs_ind, num_of_obstacle)
+            dead_object_list = self.death(obs_ind, num_of_obstacle)
 
         # construct ObstacleArray
         obstacle_array = ObstacleArray()
@@ -187,13 +188,14 @@ class KFHungarianTracker(Node):
         # rviz visualization
         marker_array = MarkerArray()
         marker_list = []
+        # add current active obstacles
         for obs in self.obstacle_list:
             marker = Marker()
             marker.header = msg.header
             marker.id = obs.msg.id
             marker.type = 1
             marker.action = 0
-            marker.color.a = 1.0
+            marker.color.a = 0.8
             marker.color.r = 1.0
             marker.pose.position = obs.msg.position
             angle = np.arctan2(obs.msg.velocity.y, obs.msg.velocity.x)
@@ -201,6 +203,14 @@ class KFHungarianTracker(Node):
             marker.pose.orientation.w = np.float(np.cos(angle / 2))
             marker.scale = obs.msg.scale
             marker_list.append(marker)
+        # add dead obstacles to delete in rviz
+        for idx in dead_object_list:
+            marker = Marker()
+            marker.header = msg.header
+            marker.id = idx
+            marker.action = 2 # delete
+            marker_list.append(marker)
+
         marker_array.markers = marker_list
         self.tracker_pose_pub.publish(marker_array)
 
@@ -214,9 +224,9 @@ class KFHungarianTracker(Node):
     def death(self, obj_ind, num_of_obstacle):
         '''count obstacles' missing frames and delete when reach threshold'''
         new_object_list = []
+        dead_object_list = []
         for obs in range(num_of_obstacle):
             obs_vel = np.linalg.norm(np.array([self.obstacle_list[obs].msg.velocity.x, self.obstacle_list[obs].msg.velocity.y, self.obstacle_list[obs].msg.velocity.z]))
-            self.get_logger().info("obs vel = " + str(obs_vel))
             if obs not in obj_ind or obs_vel < self.vel_filter:
                 self.obstacle_list[obs].dying += 1
             else:
@@ -224,7 +234,11 @@ class KFHungarianTracker(Node):
 
             if self.obstacle_list[obs].dying < self.death_threshold:
                 new_object_list.append(self.obstacle_list[obs])
+            else:
+                dead_object_list.append(self.obstacle_list[obs].msg.id)
+
         self.obstacle_list = new_object_list
+        return dead_object_list
 
 def main(args=None):
     rclpy.init(args=args)
