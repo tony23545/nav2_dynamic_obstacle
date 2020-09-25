@@ -2,6 +2,7 @@ kf_hungarian_node:
   ros__parameters:
     death_threshold: 3 # maximum mising frames before deleting an obstacle
     # Kamlan filter related
+    dim: 3 # dimension of state space, currently support 2D or 3D
     measurementNoiseCov: [1., 1., 1.] # if it's 2D, set the 3rd number to 0
     errorCovPost: [1., 1., 1., 10., 10., 10.] # if it's 2D, set the 3rd and 6th to 0
     a_noise: [2., 2., 0.5] # acceration noise

@@ -11,6 +11,8 @@ from rclpy.node import Node
 class ObstacleClass:
     """wrap a kalman filter and extra information for one single obstacle
 
+    State space is 3D (x, y, z) by default, if you want to work on 2D (for example top-down view), you can simply make z a constant value and independent of x, y.
+
     Arrtibutes:
         position: 3d position of center point, numpy array with shape (3, 1)
         velocity: 3d velocity of center point, numpy array with shape (3, 1)
@@ -18,13 +20,21 @@ class ObstacleClass:
         dying: count missing frames for this obstacle, if reach threshold, delete this obstacle
     """
 
-    def __init__(self, obstacle_msg, idx, measurementNoiseCov, errorCovPost):
+    def __init__(self, obstacle_msg, idx, dim, measurementNoiseCov, errorCovPost, a_noise):
         '''Initialize with an Obstacle msg and an assigned id'''
         self.msg = obstacle_msg
         self.msg.id = idx
         position = np.array([[obstacle_msg.position.x, obstacle_msg.position.y, obstacle_msg.position.z]]).T # shape 3*1
         velocity = np.array([[obstacle_msg.velocity.x, obstacle_msg.velocity.y, obstacle_msg.velocity.z]]).T
 
+        # check aganist state space dimension
+        if dim == 2:
+            measurementNoiseCov[2] = 0.
+            errorCovPost[2] = 0.
+            errorCovPost[5] = 0.
+            a_noise[2] = 0.
+
+        # setup kalman filter
         self.kalman = cv2.KalmanFilter(6,3) # 3d by default, 6d state space and 3d observation space
         self.kalman.measurementMatrix = np.array([[1,0,0,0,0,0], [0,1,0,0,0,0], [0,0,1,0,0,0]], np.float32)
         self.kalman.measurementNoiseCov = np.diag(measurementNoiseCov).astype(np.float32)
@@ -32,8 +42,10 @@ class ObstacleClass:
         self.kalman.errorCovPost = np.diag(errorCovPost).astype(np.float32)
         
         self.dying = 0
+        self.dim = dim
+        self.a_noise = a_noise
 
-    def predict(self, dt, a_noise):
+    def predict(self, dt):
         '''update F and Q matrices, call KalmanFilter.predict and store position and velocity'''
 
         # construct new transition matrix
@@ -62,12 +74,12 @@ class ObstacleClass:
         dt2 = dt**2
         dt3 = dt*dt2
         dt4 = dt2**2
-        Q = np.array([[dt4*a_noise[0]/4, 0, 0, dt3*a_noise[0]/2, 0, 0], 
-                      [0, dt4*a_noise[1]/4, 0, 0, dt3*a_noise[1]/2, 0],
-                      [0, 0, dt4*a_noise[2]/4, 0, 0, dt3*a_noise[2]/2],
-                      [dt3*a_noise[0]/2, 0, 0, dt2*a_noise[0], 0, 0],
-                      [0, dt3*a_noise[1]/2, 0, 0, dt2*a_noise[1], 0],
-                      [0, 0, dt3*a_noise[2]/2, 0, 0, dt2*a_noise[2]]]).astype(np.float32)
+        Q = np.array([[dt4*self.a_noise[0]/4, 0, 0, dt3*self.a_noise[0]/2, 0, 0], 
+                      [0, dt4*self.a_noise[1]/4, 0, 0, dt3*self.a_noise[1]/2, 0],
+                      [0, 0, dt4*self.a_noise[2]/4, 0, 0, dt3*self.a_noise[2]/2],
+                      [dt3*self.a_noise[0]/2, 0, 0, dt2*self.a_noise[0], 0, 0],
+                      [0, dt3*self.a_noise[1]/2, 0, 0, dt2*self.a_noise[1], 0],
+                      [0, 0, dt3*self.a_noise[2]/2, 0, 0, dt2*self.a_noise[2]]]).astype(np.float32)
 
         self.kalman.transitionMatrix = F
         self.kalman.processNoiseCov = Q
@@ -114,6 +126,7 @@ class KFHungarianTracker(Node):
             namespace='',
             parameters=[
                 ('a_noise', None),
+                ('dim', None),
                 ('death_threshold', None),
                 ('measurementNoiseCov', None),
                 ('errorCovPost', None),
@@ -124,6 +137,7 @@ class KFHungarianTracker(Node):
         self.errorCovPost = self.get_parameter("errorCovPost")._value
         self.a_noise = self.get_parameter("a_noise")._value
         self.vel_filter = self.get_parameter("vel_filter")._value
+        self.dim = int(self.get_parameter("dim")._value)
 
         self.obstacle_list = []
         self.max_id = 0
@@ -156,7 +170,7 @@ class KFHungarianTracker(Node):
 
         # kalman predict
         for obj in self.obstacle_list:
-            obj.predict(dt, self.a_noise)
+            obj.predict(dt)
 
         # hungarian matching
         cost = np.zeros((num_of_obstacle, num_of_detect))
@@ -218,7 +232,7 @@ class KFHungarianTracker(Node):
         '''generate new ObstacleClass for detections that do not match any in current obstacle list'''
         for det in range(num_of_detect):
             if det not in det_ind:
-                self.obstacle_list.append(ObstacleClass(detections[det], self.max_id, self.measurementNoiseCov, self.errorCovPost))
+                self.obstacle_list.append(ObstacleClass(detections[det], self.max_id, self.dim, self.measurementNoiseCov, self.errorCovPost, self.a_noise))
                 self.max_id =  self.max_id  + 1
 
     def death(self, obj_ind, num_of_obstacle):
