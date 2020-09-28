@@ -19,6 +19,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image, PointCloud2 
 from nav2_dynamic_msgs.msg import Obstacle, ObstacleArray
 from geometry_msgs.msg import Pose, Point
+from detectron2_detector.utils import NMS_3D
 
 class Detectron2Detector(Node):
     '''use Detectron2 to detect object masks from 2D image and estimate 3D position with Pointcloud2 data
@@ -34,12 +35,14 @@ class Detectron2Detector(Node):
                 ('pc_downsample_factor', 1),
                 ('min_mask', 100),
                 ('categories', []),
-                ('z_filter', None)
+                ('z_filter', None),
+                ('nms_filter', None)
             ])
         self.pc_downsample_factor = int(self.get_parameter("pc_downsample_factor")._value)
         self.min_mask = self.get_parameter("min_mask")._value
         self.categories = self.get_parameter("categories")._value
         self.z_filter = self.get_parameter("z_filter")._value
+        self.nms_filter = self.get_parameter("nms_filter")._value
 
         # setup detectron model
         self.cfg = get_cfg()
@@ -112,6 +115,7 @@ class Detectron2Detector(Node):
             return
 
         masks = outputs["instances"].pred_masks.cpu().numpy().astype('uint8').reshape((num_classes, -1))[:, ::self.pc_downsample_factor]
+        scores = outputs["instances"].scores.cpu().numpy().astype(np.float)
 
         # estimate 3D position with simple averaging of obstacle's points
         obstacle_array = ObstacleArray()
@@ -125,14 +129,25 @@ class Detectron2Detector(Node):
                     continue
                 obstacle_msg = Obstacle()
                 # pointcloud2 data has a different coordinate, swap y and z
-                obstacle_msg.position.x = np.float(x[idx].mean())
-                obstacle_msg.position.y = np.float(z[idx].mean())
-                obstacle_msg.position.z = np.float(y[idx].mean())
-                obstacle_msg.scale.x = np.float(x[idx].max() - x[idx].min())
-                obstacle_msg.scale.y = np.float(z[idx].max() - z[idx].min())
-                obstacle_msg.scale.z = np.float(y[idx].max() - y[idx].min())
+                # use (max+min)/2 can avoid the affect of unbalance of points density instead of average
+                x_max = x[idx].max()
+                x_min = x[idx].min()
+                y_max = y[idx].max()
+                y_min = y[idx].min()
+                z_max = z[idx].max()
+                z_min = z[idx].min()
+                obstacle_msg.score = scores[i]
+                obstacle_msg.position.x = np.float((x_max + x_min) / 2)
+                obstacle_msg.position.y = np.float((z_max + z_min) / 2)
+                obstacle_msg.position.z = np.float((y_max + y_min) / 2)
+                obstacle_msg.scale.x = np.float(x_max - x_min)
+                obstacle_msg.scale.y = np.float(z_max - z_min)
+                obstacle_msg.scale.z = np.float(y_max - y_min)
                 if obstacle_msg.position.z > self.z_filter[0] and obstacle_msg.position.z < self.z_filter[1]:
                     detections.append(obstacle_msg)
+
+        # non-max suppression
+        detections = NMS_3D(detections, self.nms_filter)
 
         # publishe detection result 
         obstacle_array.obstacles = detections

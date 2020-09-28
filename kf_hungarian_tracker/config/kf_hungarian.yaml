@@ -6,4 +6,5 @@ kf_hungarian_node:
     measurementNoiseCov: [1., 1., 1.] # if it's 2D, set the 3rd number to 0
     errorCovPost: [1., 1., 1., 10., 10., 10.] # if it's 2D, set the 3rd and 6th to 0
     a_noise: [2., 2., 0.5] # acceration noise
-    vel_filter: 0.1 # only keep obstacles with velocities greater than this value
+    vel_filter: 0.0 # only keep obstacles with velocities greater than this value
+    cost_filter: 1.0 # filter Hungarian assignment with cost greater than threshold
