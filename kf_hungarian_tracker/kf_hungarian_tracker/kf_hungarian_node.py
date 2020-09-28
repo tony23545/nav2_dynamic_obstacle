@@ -7,6 +7,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 import rclpy
 from rclpy.node import Node
+import colorsys
 
 class ObstacleClass:
     """wrap a kalman filter and extra information for one single obstacle
@@ -204,26 +205,52 @@ class KFHungarianTracker(Node):
         marker_list = []
         # add current active obstacles
         for obs in self.obstacle_list:
+            (r, g, b) = colorsys.hsv_to_rgb(obs.msg.id * 30. / 360., 1., 1.) # encode id with rgb color
+            # make a cube 
             marker = Marker()
             marker.header = msg.header
             marker.id = obs.msg.id
-            marker.type = 1
+            marker.type = 1 # CUBE
             marker.action = 0
-            marker.color.a = 0.8
-            marker.color.r = 1.0
+            marker.color.a = 0.5
+            marker.color.r = r
+            marker.color.g = g
+            marker.color.b = b
             marker.pose.position = obs.msg.position
             angle = np.arctan2(obs.msg.velocity.y, obs.msg.velocity.x)
             marker.pose.orientation.z = np.float(np.sin(angle / 2))
             marker.pose.orientation.w = np.float(np.cos(angle / 2))
             marker.scale = obs.msg.scale
             marker_list.append(marker)
+            # make an arrow
+            arrow = Marker()
+            arrow.header = msg.header
+            arrow.id = 255 - obs.msg.id
+            arrow.type = 0
+            arrow.action = 0
+            arrow.color.a = 1.0
+            arrow.color.r = r
+            arrow.color.g = g
+            arrow.color.b = b
+            arrow.pose.position = obs.msg.position
+            arrow.pose.orientation.z = np.float(np.sin(angle / 2))
+            arrow.pose.orientation.w = np.float(np.cos(angle / 2))
+            arrow.scale.x = np.linalg.norm([obs.msg.velocity.x, obs.msg.velocity.y, obs.msg.velocity.z])
+            arrow.scale.y = 0.05
+            arrow.scale.z = 0.05
+            marker_list.append(arrow)
         # add dead obstacles to delete in rviz
         for idx in dead_object_list:
             marker = Marker()
             marker.header = msg.header
             marker.id = idx
             marker.action = 2 # delete
+            arrow = Marker()
+            arrow.header = msg.header
+            arrow.id = 255 - idx
+            arrow.action = 2
             marker_list.append(marker)
+            marker_list.append(arrow)
 
         marker_array.markers = marker_list
         self.tracker_pose_pub.publish(marker_array)
@@ -241,7 +268,7 @@ class KFHungarianTracker(Node):
         dead_object_list = []
         for obs in range(num_of_obstacle):
             obs_vel = np.linalg.norm(np.array([self.obstacle_list[obs].msg.velocity.x, self.obstacle_list[obs].msg.velocity.y, self.obstacle_list[obs].msg.velocity.z]))
-            if obs not in obj_ind or obs_vel < self.vel_filter:
+            if (obs not in obj_ind) or (obs_vel < self.vel_filter):
                 self.obstacle_list[obs].dying += 1
             else:
                 self.obstacle_list[obs].dying = 0
