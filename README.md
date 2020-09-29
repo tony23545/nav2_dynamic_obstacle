@@ -12,3 +12,6 @@ In `kf_hungarian_tracker`, Kalman filter is used to tracking dynamic obstacles i
 - Ubuntu 20.04
 - ROS2 foxy
 - python3.8
+
+<a href="https://www.youtube.com/watch?v=A8EhMs6ObCo" target="_blank"><img src="http://img.youtube.com/vi/A8EhMs6ObCo/0.jpg" 
+alt="IMAGE ALT TEXT HERE" width="480" height="360" border="10" /></a>
