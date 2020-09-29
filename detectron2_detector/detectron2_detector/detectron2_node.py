@@ -60,8 +60,8 @@ class Detectron2Detector(Node):
             1)
 
         # setup publisher
-        self.detect_obj_pub = self.create_publisher(ObstacleArray, 'detection', 10)
-        self.detect_img_pub = self.create_publisher(Image, 'image', 10)
+        self.detect_obj_pub = self.create_publisher(ObstacleArray, 'detection', 2)
+        self.detect_img_pub = self.create_publisher(Image, 'image', 2)
 
         self.count = -1
 
