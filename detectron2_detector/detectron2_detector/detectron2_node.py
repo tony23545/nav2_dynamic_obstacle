@@ -29,14 +29,14 @@ class Detectron2Detector(Node):
         self.declare_parameters(
             namespace='',
             parameters=[
-                ('detectron_config_file', None),
-                ('detectron_score_thresh', 0.5),
-                ('pointcloud2_topic', None),
-                ('pc_downsample_factor', 1),
-                ('min_mask', 100),
-                ('categories', []),
-                ('z_filter', None),
-                ('nms_filter', None)
+                ('detectron_config_file', "COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"),
+                ('detectron_score_thresh', 0.8),
+                ('pointcloud2_topic', "/realsense/camera/pointcloud"),
+                ('pc_downsample_factor', 16),
+                ('min_mask', 20),
+                ('categories', [0]),
+                ('z_filter', [-2., 2.]),
+                ('nms_filter', 0.3)
             ])
         self.pc_downsample_factor = int(self.get_parameter("pc_downsample_factor")._value)
         self.min_mask = self.get_parameter("min_mask")._value

@@ -31,13 +31,13 @@ class KFHungarianTracker(Node):
         self.declare_parameters(
             namespace='',
             parameters=[
-                ('a_noise', None),
-                ('dim', None),
-                ('death_threshold', None),
-                ('measurementNoiseCov', None),
-                ('errorCovPost', None),
-                ('vel_filter', None),
-                ('cost_filter', None)
+                ('a_noise', [2., 2., 0.5]),
+                ('dim', 3),
+                ('death_threshold', 3),
+                ('measurementNoiseCov', [1., 1., 1.]),
+                ('errorCovPost', [1., 1., 1., 10., 10., 10.]),
+                ('vel_filter', 0.2),
+                ('cost_filter', 1.0)
             ])
         self.death_threshold = self.get_parameter("death_threshold")._value
         self.measurementNoiseCov = self.get_parameter("measurementNoiseCov")._value
@@ -110,7 +110,10 @@ class KFHungarianTracker(Node):
         obstacle_array.header = msg.header
         track_list = []
         for obs in self.obstacle_list:
-            track_list.append(obs.msg)
+            # do not publish obstacles with low speed
+            obs_vel = np.linalg.norm(np.array([obs.msg.velocity.x, obs.msg.velocity.y, obs.msg.velocity.z]))
+            if obs_vel > self.vel_filter:
+                track_list.append(obs.msg)
         obstacle_array.obstacles = track_list
         self.tracker_obstacle_pub.publish(obstacle_array)
 
@@ -182,8 +185,7 @@ class KFHungarianTracker(Node):
         dead_object_list = []
         # for previous obstacles
         for obs in range(num_of_obstacle):
-            obs_vel = np.linalg.norm(np.array([self.obstacle_list[obs].msg.velocity.x, self.obstacle_list[obs].msg.velocity.y, self.obstacle_list[obs].msg.velocity.z]))
-            if (obs not in obj_ind) or (obs_vel < self.vel_filter):
+            if obs not in obj_ind:
                 self.obstacle_list[obs].dying += 1
             else:
                 self.obstacle_list[obs].dying = 0
