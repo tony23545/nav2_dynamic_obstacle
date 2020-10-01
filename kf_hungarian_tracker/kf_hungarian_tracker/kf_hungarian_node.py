@@ -137,7 +137,7 @@ class KFHungarianTracker(Node):
             angle = np.arctan2(obs.msg.velocity.y, obs.msg.velocity.x)
             marker.pose.orientation.z = np.float(np.sin(angle / 2))
             marker.pose.orientation.w = np.float(np.cos(angle / 2))
-            marker.scale = obs.msg.scale
+            marker.scale = obs.msg.size
             marker_list.append(marker)
             # make an arrow
             arrow = Marker()

@@ -5,9 +5,9 @@ from functools import reduce
 def IoU_3D(obstacle1, obstacle2):
 	'''computer IoU of 3D bounding box given 2 Obstacle msgs '''
 	p1 = [obstacle1.position.x, obstacle1.position.y, obstacle1.position.z]
-	s1 = [obstacle1.scale.x, obstacle1.scale.y, obstacle1.scale.z]
+	s1 = [obstacle1.size.x, obstacle1.size.y, obstacle1.size.z]
 	p2 = [obstacle2.position.x, obstacle2.position.y, obstacle2.position.z]
-	s2 = [obstacle2.scale.x, obstacle2.scale.y, obstacle2.scale.z]
+	s2 = [obstacle2.size.x, obstacle2.size.y, obstacle2.size.z]
 
 	max1 = [p1[i] + s1[i] / 2 for i in range(3)]
 	min1 = [p1[i] - s1[i] / 2 for i in range(3)]

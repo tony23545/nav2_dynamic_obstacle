@@ -88,7 +88,7 @@ class ObstacleClass:
         self.msg.velocity.x = np.float(self.kalman.statePost[3][0])
         self.msg.velocity.y = np.float(self.kalman.statePost[4][0])
         self.msg.velocity.z = np.float(self.kalman.statePost[5][0])
-        self.msg.scale = detect_msg.scale
+        self.msg.size = detect_msg.size
 
     def distance(self, other_msg):
         '''measurement distance between two obstacles, dy default it's Euler distance between centers

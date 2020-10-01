@@ -16,6 +16,11 @@ from detectron2.data import MetadataCatalog, DatasetCatalog
 import rclpy
 from rclpy.node import Node
 
+from tf2_ros import LookupException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
+from scipy.spatial.transform import Rotation as R
+
 from sensor_msgs.msg import Image, PointCloud2 
 from nav2_dynamic_msgs.msg import Obstacle, ObstacleArray
 from geometry_msgs.msg import Pose, Point
@@ -29,6 +34,7 @@ class Detectron2Detector(Node):
         self.declare_parameters(
             namespace='',
             parameters=[
+                ('global_frame', "camera_link"),
                 ('detectron_config_file', "COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"),
                 ('detectron_score_thresh', 0.8),
                 ('pointcloud2_topic', "/realsense/camera/pointcloud"),
@@ -38,6 +44,7 @@ class Detectron2Detector(Node):
                 ('z_filter', [-2., 2.]),
                 ('nms_filter', 0.3)
             ])
+        self.global_frame = self.get_parameter("global_frame")._value
         self.pc_downsample_factor = int(self.get_parameter("pc_downsample_factor")._value)
         self.min_mask = self.get_parameter("min_mask")._value
         self.categories = self.get_parameter("categories")._value
@@ -64,6 +71,10 @@ class Detectron2Detector(Node):
         self.detect_img_pub = self.create_publisher(Image, 'image', 2)
 
         self.count = -1
+
+        # setup tf related
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
 
     def outlier_filter(self, x, z, idx):
         '''simple outlier filter, assume Gaussian distribution and drop points with low probability (too far away from center)'''
@@ -138,18 +149,43 @@ class Detectron2Detector(Node):
                 z_min = z[idx].min()
                 obstacle_msg.score = scores[i]
                 obstacle_msg.position.x = np.float((x_max + x_min) / 2)
-                obstacle_msg.position.y = np.float((z_max + z_min) / 2)
-                obstacle_msg.position.z = np.float((y_max + y_min) / 2)
-                obstacle_msg.scale.x = np.float(x_max - x_min)
-                obstacle_msg.scale.y = np.float(z_max - z_min)
-                obstacle_msg.scale.z = np.float(y_max - y_min)
-                if obstacle_msg.position.z > self.z_filter[0] and obstacle_msg.position.z < self.z_filter[1]:
-                    detections.append(obstacle_msg)
+                obstacle_msg.position.y = np.float((y_max + y_min) / 2)
+                obstacle_msg.position.z = np.float((z_max + z_min) / 2)
+                obstacle_msg.size.x = np.float(x_max - x_min)
+                obstacle_msg.size.y = np.float(y_max - y_min)
+                obstacle_msg.size.z = np.float(z_max - z_min)
+                #
+                detections.append(obstacle_msg)
 
+        # transform to global frame
+        if self.global_frame is not None:
+            try:
+                trans = self.tf_buffer.lookup_transform(self.global_frame, msg.header.frame_id, rclpy.time.Time())
+            except LookupException:
+                self.get_logger().info('fail to get tf from {} to {}'.format(msg.header.frame_id, self.global_frame))
+                return
+            else:
+                # TODO: use tf2_geometry_msgs when it can be imported to python in ros2
+                r = R.from_quat([trans.transform.rotation.x, trans.transform.rotation.y, trans.transform.rotation.z, trans.transform.rotation.w])
+                msg.header.frame_id = self.global_frame
+                for i in range(len(detections)):
+                    p = [detections[i].position.x, detections[i].position.y, detections[i].position.z]
+                    p = r.apply(p)
+                    detections[i].position.x = p[0] + trans.transform.translation.x 
+                    detections[i].position.y = p[1] + trans.transform.translation.y
+                    detections[i].position.z = p[2] + trans.transform.translation.z
+
+        # filter detections
         # non-max suppression
         detections = NMS_3D(detections, self.nms_filter)
+        # filter z axis
+        new_detections = []
+        for det in detections:
+            if det.position.z > self.z_filter[0] and det.position.z < self.z_filter[1]:
+                new_detections.append(det)
+        detections = new_detections
 
-        # publishe detection result 
+        # publish detection result 
         obstacle_array.obstacles = detections
         self.detect_obj_pub.publish(obstacle_array)
 
