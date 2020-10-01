@@ -32,7 +32,7 @@ class KFHungarianTracker(Node):
             namespace='',
             parameters=[
                 ('a_noise', [2., 2., 0.5]),
-                ('dim', 3),
+                ('top_down', False),
                 ('death_threshold', 3),
                 ('measurementNoiseCov', [1., 1., 1.]),
                 ('errorCovPost', [1., 1., 1., 10., 10., 10.]),
@@ -44,7 +44,7 @@ class KFHungarianTracker(Node):
         self.errorCovPost = self.get_parameter("errorCovPost")._value
         self.a_noise = self.get_parameter("a_noise")._value
         self.vel_filter = self.get_parameter("vel_filter")._value
-        self.dim = int(self.get_parameter("dim")._value)
+        self.top_down = self.get_parameter("top_down")._value
         self.cost_filter = self.get_parameter("cost_filter")._value
 
         self.obstacle_list = []
@@ -176,7 +176,7 @@ class KFHungarianTracker(Node):
         '''generate new ObstacleClass for detections that do not match any in current obstacle list'''
         for det in range(num_of_detect):
             if det not in det_ind:
-                self.obstacle_list.append(ObstacleClass(detections[det], self.max_id, self.dim, self.measurementNoiseCov, self.errorCovPost, self.a_noise))
+                self.obstacle_list.append(ObstacleClass(detections[det], self.max_id, self.top_down, self.measurementNoiseCov, self.errorCovPost, self.a_noise))
                 self.max_id =  self.max_id  + 1
 
     def death(self, obj_ind, num_of_obstacle):

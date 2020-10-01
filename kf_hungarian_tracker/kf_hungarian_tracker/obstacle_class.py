@@ -13,15 +13,15 @@ class ObstacleClass:
         dying: count missing frames for this obstacle, if reach threshold, delete this obstacle
     """
 
-    def __init__(self, obstacle_msg, idx, dim, measurementNoiseCov, errorCovPost, a_noise):
+    def __init__(self, obstacle_msg, idx, top_down, measurementNoiseCov, errorCovPost, a_noise):
         '''Initialize with an Obstacle msg and an assigned id'''
         self.msg = obstacle_msg
         self.msg.id = idx
         position = np.array([[obstacle_msg.position.x, obstacle_msg.position.y, obstacle_msg.position.z]]).T # shape 3*1
         velocity = np.array([[obstacle_msg.velocity.x, obstacle_msg.velocity.y, obstacle_msg.velocity.z]]).T
 
-        # check aganist state space dimension
-        if dim == 2:
+        # check aganist state space dimension, top_down or not
+        if top_down:
             measurementNoiseCov[2] = 0.
             errorCovPost[2] = 0.
             errorCovPost[5] = 0.
@@ -35,7 +35,7 @@ class ObstacleClass:
         self.kalman.errorCovPost = np.diag(errorCovPost).astype(np.float32)
         
         self.dying = 0
-        self.dim = dim
+        self.top_down = top_down
         self.a_noise = a_noise
 
     def predict(self, dt):
@@ -80,6 +80,8 @@ class ObstacleClass:
 
     def correct(self, detect_msg):
         '''extract position as measurement and update KalmanFilter'''
+        if self.top_down:
+            detect_msg.position.z = 0.
         measurement = np.array([[detect_msg.position.x, detect_msg.position.y, detect_msg.position.z]]).T.astype(np.float32)
         self.kalman.correct(measurement)
         self.msg.position.x = np.float(self.kalman.statePost[0][0])

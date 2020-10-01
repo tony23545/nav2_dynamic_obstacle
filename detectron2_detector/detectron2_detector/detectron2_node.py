@@ -133,7 +133,8 @@ class Detectron2Detector(Node):
         obstacle_array.header = msg.header
         detections = []
         for i in range(num_classes):
-            if outputs["instances"].pred_classes[i] in self.categories:
+            # if user does not specify any interested category, keep all; else select those interested objects
+            if (len(self.categories) == 0) or (outputs["instances"].pred_classes[i] in self.categories):
                 idx = np.where(masks[i])[0]
                 idx = self.outlier_filter(x[idx], z[idx], idx)
                 if idx.shape[0] < self.min_mask:
@@ -154,7 +155,6 @@ class Detectron2Detector(Node):
                 obstacle_msg.size.x = np.float(x_max - x_min)
                 obstacle_msg.size.y = np.float(y_max - y_min)
                 obstacle_msg.size.z = np.float(z_max - z_min)
-                #
                 detections.append(obstacle_msg)
 
         # transform to global frame
@@ -174,6 +174,11 @@ class Detectron2Detector(Node):
                     detections[i].position.x = p[0] + trans.transform.translation.x 
                     detections[i].position.y = p[1] + trans.transform.translation.y
                     detections[i].position.z = p[2] + trans.transform.translation.z
+                    s = [detections[i].size.x, detections[i].size.y, detections[i].size.z]
+                    s = r.apply(s)
+                    detections[i].size.x = s[0]
+                    detections[i].size.y = s[1]
+                    detections[i].size.z = s[2]
 
         # filter detections
         # non-max suppression
