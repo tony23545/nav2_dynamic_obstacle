@@ -87,6 +87,10 @@ class Detectron2Detector(Node):
         return idx[gaussian_kernel > 0.5]
 
     def callback(self, msg):
+        # check if there is subscirbers
+        if self.detect_obj_pub.get_subscription_count() == 0 and self.detect_img_pub.get_subscription_count() == 0:
+            return
+
         # extract data from msg
         height = msg.height
         width = msg.width

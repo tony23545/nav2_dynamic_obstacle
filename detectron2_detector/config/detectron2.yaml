@@ -6,6 +6,6 @@ detectron2_node:
     pointcloud2_topic: "/realsense/camera/pointcloud"
     pc_downsample_factor: 16
     min_mask: 20 # minimum mask to be considered as an obstacle candidate
-    categories: [0] # please check out COCO dataset category_id list if you want to config this
+    categories: [0] # please check out COCO dataset category_id list if you want to config this; if you want to track all, leave it empty
     z_filter: [-2., 2.] # only keep objects with z value within this range 
     nms_filter: 0.3 # 3D non-max suppression threshold, [0, 1]

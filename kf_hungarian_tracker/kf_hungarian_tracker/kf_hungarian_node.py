@@ -61,7 +61,7 @@ class KFHungarianTracker(Node):
 
         # publisher for tracking result
         self.tracker_obstacle_pub = self.create_publisher(ObstacleArray, 'tracking', 10)
-        self.tracker_pose_pub = self.create_publisher(MarkerArray, 'tracking_pose_array', 10)
+        self.tracker_marker_pub = self.create_publisher(MarkerArray, 'marker', 10)
 
     def callback(self, msg):
         '''callback function for detection result'''
@@ -104,6 +104,10 @@ class KFHungarianTracker(Node):
         # birth of new detection obstacles and death of disappear obstacle
         self.birth(det_ind, num_of_detect, detections)
         dead_object_list = self.death(obs_ind, num_of_obstacle)
+
+        # check if there is subscirbers
+        if self.tracker_obstacle_pub.get_subscription_count() == 0 and self.tracker_marker_pub.get_subscription_count() == 0:
+            return
 
         # construct ObstacleArray
         obstacle_array = ObstacleArray()
@@ -170,7 +174,7 @@ class KFHungarianTracker(Node):
             marker_list.append(arrow)
 
         marker_array.markers = marker_list
-        self.tracker_pose_pub.publish(marker_array)
+        self.tracker_marker_pub.publish(marker_array)
 
     def birth(self, det_ind, num_of_detect, detections):
         '''generate new ObstacleClass for detections that do not match any in current obstacle list'''
